@@ -60,3 +60,18 @@ exports.updateEnquiryStatus = async (req, res, next) => {
         next(error);
     }
 };
+
+exports.deleteEnquiry = async (req, res, next) => {
+    try {
+        const enquiry = await Enquiry.findById(req.params.id);
+        if (enquiry) {
+            await enquiry.deleteOne();
+            res.json({ message: 'Enquiry removed' });
+        } else {
+            res.status(404);
+            throw new Error('Enquiry not found');
+        }
+    } catch (error) {
+        next(error);
+    }
+};
