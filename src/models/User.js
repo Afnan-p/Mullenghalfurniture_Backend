@@ -15,6 +15,8 @@ const userSchema = new mongoose.Schema({
     provider: { type: String, default: 'local' },
     previousBalance: { type: Number, default: 0 },
     isBlocked: { type: Boolean, default: false },
+    resetPasswordToken: String,
+    resetPasswordExpire: Date,
 }, { timestamps: true });
 
 userSchema.pre('save', async function() {

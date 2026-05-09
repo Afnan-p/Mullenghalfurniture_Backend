@@ -1,12 +1,19 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 
 const generateToken = (id) => {
     return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
 };
 
 exports.registerUser = async (req, res, next) => {
-    const { name, email, password, shopName, phone, role } = req.body;
+    let { name, email, password, shopName, phone, role } = req.body;
+    
+    // Trim inputs
+    name = name?.trim();
+    email = email?.trim()?.toLowerCase();
+    shopName = shopName?.trim();
+    phone = phone?.trim();
     
     try {
         // Basic validation
@@ -67,7 +74,8 @@ exports.registerUser = async (req, res, next) => {
 };
 
 exports.loginUser = async (req, res) => {
-    const { email, password } = req.body;
+    let { email, password } = req.body;
+    email = email?.trim()?.toLowerCase();
     try {
         const user = await User.findOne({ email });
         if (user && user.provider === 'local' && (await user.comparePassword(password))) {
@@ -90,6 +98,84 @@ exports.loginUser = async (req, res) => {
         } else {
             res.status(401).json({ message: 'Invalid email or password' });
         }
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// @desc    Get current user
+// @route   GET /api/auth/me
+// @access  Private
+exports.getMe = async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id).select('-password');
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        res.json(user);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// @desc    Forgot Password
+// @route   POST /api/auth/forgot-password
+// @access  Public
+exports.forgotPassword = async (req, res) => {
+    const { email } = req.body;
+    try {
+        const user = await User.findOne({ email: email?.trim()?.toLowerCase() });
+        if (!user) {
+            return res.status(404).json({ message: 'No user found with that email' });
+        }
+
+        if (user.provider !== 'local') {
+            return res.status(400).json({ message: `This account is registered via ${user.provider}. Please use that method.` });
+        }
+
+        // Generate Token
+        const resetToken = crypto.randomBytes(20).toString('hex');
+        user.resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+        user.resetPasswordExpire = Date.now() + 10 * 60 * 1000; // 10 mins
+
+        await user.save();
+
+        // In production, send email. For now, log and return (as mock)
+        console.log(`Reset Token for ${email}: ${resetToken}`);
+        
+        res.json({ 
+            message: 'Password reset link sent (Check server logs in dev)',
+            resetToken: process.env.NODE_ENV === 'development' ? resetToken : undefined 
+        });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// @desc    Reset Password
+// @route   PUT /api/auth/reset-password/:resetToken
+// @access  Public
+exports.resetPassword = async (req, res) => {
+    const resetPasswordToken = crypto.createHash('sha256').update(req.params.resetToken).digest('hex');
+
+    try {
+        const user = await User.findOne({
+            resetPasswordToken,
+            resetPasswordExpire: { $gt: Date.now() }
+        });
+
+        if (!user) {
+            return res.status(400).json({ message: 'Invalid or expired reset token' });
+        }
+
+        // Set new password
+        user.password = req.body.password;
+        user.resetPasswordToken = undefined;
+        user.resetPasswordExpire = undefined;
+
+        await user.save();
+
+        res.json({ message: 'Password reset successful' });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
