@@ -82,6 +82,45 @@ exports.getGlobalStats = async (req, res, next) => {
         const Product = require('../models/Product');
         const Enquiry = require('../models/Enquiry');
 
+        const { period = 'weekly' } = req.query;
+
+        // Date ranges for trends
+        const now = new Date();
+        const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+
+        // Helper for growth calculation
+        const calculateGrowth = (current, previous) => {
+            if (previous === 0) return current > 0 ? 100 : 0;
+            return Math.round(((current - previous) / previous) * 100);
+        };
+
+        // Current & Previous Month Counts for Trends
+        const [currUsers, prevUsers, currProducts, prevProducts, currEnquiries, prevEnquiries, allTransactions] = await Promise.all([
+            User.countDocuments({ role: 'user', createdAt: { $gte: startOfCurrentMonth } }),
+            User.countDocuments({ role: 'user', createdAt: { $gte: startOfLastMonth, $lte: endOfLastMonth } }),
+            Product.countDocuments({ createdAt: { $gte: startOfCurrentMonth } }),
+            Product.countDocuments({ createdAt: { $gte: startOfLastMonth, $lte: endOfLastMonth } }),
+            Enquiry.countDocuments({ createdAt: { $gte: startOfCurrentMonth } }),
+            Enquiry.countDocuments({ createdAt: { $gte: startOfLastMonth, $lte: endOfLastMonth } }),
+            Transaction.find({})
+        ]);
+
+        const currRevenue = allTransactions
+            .filter(t => t.type === 'debit' && t.date >= startOfCurrentMonth)
+            .reduce((sum, t) => sum + t.amount, 0);
+        const prevRevenue = allTransactions
+            .filter(t => t.type === 'debit' && t.date >= startOfLastMonth && t.date <= endOfLastMonth)
+            .reduce((sum, t) => sum + t.amount, 0);
+
+        const trends = {
+            users: calculateGrowth(currUsers, prevUsers),
+            products: calculateGrowth(currProducts, prevProducts),
+            enquiries: calculateGrowth(currEnquiries, prevEnquiries),
+            revenue: calculateGrowth(currRevenue, prevRevenue)
+        };
+
         // Main Stats
         const users = await User.find({ role: 'user' });
         const totalUsers = users.length;
@@ -93,37 +132,15 @@ exports.getGlobalStats = async (req, res, next) => {
         const pendingEnquiries = await Enquiry.countDocuments({ status: 'pending' });
         const completedEnquiries = await Enquiry.countDocuments({ status: 'completed' });
 
-        const transactions = await Transaction.find({});
         let totalDebit = 0;
         let totalCredit = 0;
         
         // Revenue Stats
-        const now = new Date();
         const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-
-        const todayRevenue = transactions
+        const todayRevenue = allTransactions
             .filter(t => t.type === 'debit' && t.date >= startOfToday)
             .reduce((sum, t) => sum + t.amount, 0);
-        
-        const monthlyRevenue = transactions
-            .filter(t => t.type === 'debit' && t.date >= startOfMonth)
-            .reduce((sum, t) => sum + t.amount, 0);
-
-        // Calculate trends (comparing last 7 days with previous 7 days)
-        const getTrend = (current, previous) => {
-            if (previous === 0) return current > 0 ? 100 : 0;
-            return Math.round(((current - previous) / previous) * 100);
-        };
-
-        // For simplicity, we'll just mock trends or use basic counts for now
-        // A real implementation would compare date ranges
-        const trends = {
-            users: 12, // mock
-            products: 5, // mock
-            enquiries: -3, // mock
-            revenue: 8 // mock
-        };
+        const monthlyRevenue = currRevenue;
 
         // Recent Enquiries
         const recentEnquiries = await Enquiry.find({})
@@ -146,26 +163,29 @@ exports.getGlobalStats = async (req, res, next) => {
             ...latestTransactions.map(t => ({ type: 'transaction', action: 'New transaction', target: `$${t.amount.toLocaleString()}`, date: t.createdAt }))
         ].sort((a, b) => b.date - a.date).slice(0, 10);
 
-        // Chart Data
-        const last7Days = [...Array(7)].map((_, i) => {
+        // Chart Data (Dynamic based on period)
+        const daysToFetch = period === 'monthly' ? 30 : 7;
+        const lastNDays = [...Array(daysToFetch)].map((_, i) => {
             const date = new Date();
             date.setDate(date.getDate() - i);
             return date.toISOString().split('T')[0];
         }).reverse();
 
-        const chartData = last7Days.map(dateStr => {
-            const dayTxs = transactions.filter(t => t.date.toISOString().split('T')[0] === dateStr);
+        const chartData = lastNDays.map(dateStr => {
+            const dayTxs = allTransactions.filter(t => t.date.toISOString().split('T')[0] === dateStr);
             const debit = dayTxs.filter(t => t.type === 'debit').reduce((sum, t) => sum + t.amount, 0);
             const credit = dayTxs.filter(t => t.type === 'credit').reduce((sum, t) => sum + t.amount, 0);
             
             return {
-                name: new Date(dateStr).toLocaleDateString('en-US', { weekday: 'short' }),
+                name: period === 'monthly' 
+                    ? new Date(dateStr).getDate() 
+                    : new Date(dateStr).toLocaleDateString('en-US', { weekday: 'short' }),
                 debit,
                 credit
             };
         });
 
-        transactions.forEach(t => {
+        allTransactions.forEach(t => {
             if (t.type === 'debit') totalDebit += t.amount;
             if (t.type === 'credit') totalCredit += t.amount;
         });
