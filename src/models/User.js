@@ -17,6 +17,8 @@ const userSchema = new mongoose.Schema({
     isBlocked: { type: Boolean, default: false },
     resetPasswordToken: String,
     resetPasswordExpire: Date,
+    resetOtp: String,
+    resetOtpExpire: Date,
 }, { timestamps: true });
 
 userSchema.pre('save', async function() {
