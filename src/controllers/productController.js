@@ -12,7 +12,17 @@ exports.getProducts = async (req, res, next) => {
 
 exports.getProductById = async (req, res, next) => {
     try {
-        const product = await Product.findById(req.params.id);
+        const { id } = req.params;
+        let product;
+        
+        // Check if id is a valid MongoDB ObjectId
+        if (id.match(/^[0-9a-fA-F]{24}$/)) {
+            product = await Product.findById(id);
+        } else {
+            // Otherwise, try to find by slug
+            product = await Product.findOne({ slug: id });
+        }
+
         if (product) {
             res.json(product);
         } else {
